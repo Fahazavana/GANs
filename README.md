@@ -1,1 +1,1 @@
-# GANs: Impelementaion of GANs and some of its variants ss
+# GANs: Impelementaion of GANs and some of its variants
