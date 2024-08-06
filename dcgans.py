@@ -11,6 +11,7 @@ from IPython.display import clear_output
 
 torch.autograd.set_detect_anomaly(True)
 
+# +
 class UnNormalize(object):
     def __init__(self, mean, std):
         self.mean = mean
@@ -20,40 +21,11 @@ class UnNormalize(object):
         for t in tensor:
             t.mul_(self.std[0]).add_(self.mean[0])
         return tensor
-
-class Discriminator(nn.Module):
-    """
-    Discriminator model
-    """
-    def __init__(self, img_dim=784):
-        super(Discriminator, self).__init__()
-        self.disc = nn.Sequential(
-            nn.Flatten(1, -1),
-            nn.Linear(img_dim, 128),
-            nn.LeakyReLU(0.2),
-            nn.Dropout(0.5),
-            nn.Linear(128, 1),
-            nn.Sigmoid()
-        )
-    def forward(self, x):
-        return self.disc(x)
-
-class Generator(nn.Module):
-    """
-    Generator model
-    """
-    def __init__(self, z_dim, img_dim):
-        super(Generator, self).__init__()
-        self.gen = nn.Sequential(
-            nn.Linear(z_dim, 256),
-            nn.LeakyReLU(0.2),
-            nn.Linear(256, img_dim),
-            nn.Tanh()
-        )
-
-    def forward(self, x):
-        return self.gen(x)
-
+def get_device():
+    if platform.platform().lower().startswith("mac"):  # macOS
+        return "mps" if torch.backends.mps.is_available() else "cpu"
+    else:  # Linux, Windows
+        return "cuda" if torch.cuda.is_available() else "cpu"
 
 class GANLoss(nn.Module):
     
@@ -74,6 +46,58 @@ class GANLoss(nn.Module):
         target = self.get_target_label(prediction, is_real)
         return self.loss(prediction, target)
 
+
+# -
+
+class Discriminator(nn.Module):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+        self.discriminator = nn.Sequential(
+            nn.Conv2d(1, 8, kernel_size=3, stride=2, padding=1),  # Output: (8, 14, 14)
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(8, 16, kernel_size=3, stride=2, padding=1),  # Output: (16, 7, 7)
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),  # Output: (32, 4, 4)
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # Output: (64, 2, 2)
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(64, 1, kernel_size=2, stride=1, padding=0),  # Output: (1, 1, 1)
+            nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        return self.discriminator(x).view(-1, 1)
+
+# +
+class Generator(nn.Module):
+    def __init__(self):
+        super(Generator, self).__init__()
+        self.generator = nn.Sequential(
+            nn.Unflatten(1, (64, 2, 2)),
+            nn.ConvTranspose2d(64, 32, kernel_size=5, stride=3, padding=1, output_padding=1),  # (32, 4, 4)
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1),  # (16, 8, 8)
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose2d(16, 1, kernel_size=3, stride=2, padding=1, output_padding=1),  # (8, 16, 16)
+            nn.Tanh()
+        )
+
+    def forward(self, x):
+        return self.generator(x)
+
+if __name__ == "__main__":
+    input_tensor = torch.randn(8, 64*2*2) 
+    generator = Generator()
+    output = generator(input_tensor)
+    print(output.shape)  # Should print torch.Size([8, 1, 28, 28])
+
+
+# -
 
 def get_device():
     if platform.platform().lower().startswith("mac"):  # macOS
@@ -116,7 +140,6 @@ def train(generator, discriminator, latent_dim, train_loader, optimizer, criteri
             g_loss.backward()
             optimizer["gen"].step()
             run_gloss += g_loss.item() * real_imgs.shape[0]
-            pbar.set_postfix(GL=f"{run_gloss / M:.3f}", DL=f"{run_dloss / M:.3f}")
 
             # Discriminator training
             y_hat_real = discriminator(real_imgs)
@@ -130,6 +153,7 @@ def train(generator, discriminator, latent_dim, train_loader, optimizer, criteri
             optimizer["disc"].step()
             run_dloss += d_loss.item() * real_imgs.shape[0]
 
+            pbar.set_postfix(GL=f"{run_gloss / M:.3f}", DL=f"{run_dloss / M:.3f}")
 
 
         if (epoch + 1 )% 20 == 0 or (epoch==0):
@@ -149,12 +173,12 @@ if __name__ == "__main__":
     ROOT = "../DATASET/MNIST/test/"
     LR = 2e-4
     BATCH_SIZE = 1024
-    Z_DIM = 64
+    Z_DIM = 64*2*2
     IMAGE_SIZE = 28 * 28
-    EPOCHS = 1000
+    EPOCHS = 200
 
-    discriminator = Discriminator(IMAGE_SIZE).to(device)
-    generator = Generator(Z_DIM, IMAGE_SIZE).to(device)
+    discriminator = Discriminator().to(device)
+    generator = Generator().to(device)
 
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 
@@ -166,6 +190,6 @@ if __name__ == "__main__":
         "gen":optim.Adam(generator.parameters(), lr=LR)
     }
 
-    train(generator, discriminator, Z_DIM, dataloader, optimizer, GANLoss(), EPOCHS, device)
+train(generator, discriminator, Z_DIM, dataloader, optimizer, GANLoss(), EPOCHS, device)
 
 
